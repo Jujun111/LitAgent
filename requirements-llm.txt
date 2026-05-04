@@ -1,0 +1,6 @@
+# Optional AI microservice dependencies.
+# Install this in a Linux/WSL CUDA environment, not the default Windows prototype venv.
+
+-r requirements.txt
+
+vllm>=0.12.0

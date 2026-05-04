@@ -17,7 +17,7 @@ PROVIDER_PRESETS = {
         "provider": "openai_compatible",
         "base_url": "http://localhost:8000/v1",
         "api_key": "token-abc123",
-        "model": "Qwen/Qwen2.5-1.5B-Instruct",
+        "model": "jc-builds/Qwen3.5-9B-Q4_K_M-GGUF:Q4_K_M",
         "structured_mode": "vllm",
     },
     "Ollama local": {

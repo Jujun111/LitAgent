@@ -8,6 +8,9 @@ env/
 .env
 .env.*
 *.log
+*.gguf
+models/
+llm_service/.env
 
 A1.pdf
 A3_diagram.pdf
