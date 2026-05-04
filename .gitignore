@@ -10,7 +10,11 @@ env/
 *.log
 *.gguf
 models/
+tools/
+evidence/
+llm_service/logs/
 llm_service/.env
+llm_service/.llamacpp.env
 
 A1.pdf
 A3_diagram.pdf

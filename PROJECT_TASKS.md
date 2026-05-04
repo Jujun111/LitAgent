@@ -2,7 +2,7 @@
 
 ## Current Working Target
 
-Course-ready prototype plus optional vLLM AI microservice on `feat/llm-service`.
+Course-ready prototype plus validated llama.cpp AI microservice on `feat/llm-service`.
 
 Default demo path:
 
@@ -25,10 +25,10 @@ http://127.0.0.1:8501
 | Task 1.2: FSM Orchestration | Done | `build_litagent_graph()` uses LangGraph nodes: `Fetch_Data`, `Chunk_Text`, `Build_Prompt`, `Call_LLM`, `Validate_JSON` |
 | Task 1.3: Mock AI | Done | `mock_call_llm_node()` returns schema-compliant JSON for demos/tests |
 | Task 1.4: Client UI | Done | `streamlit_app.py` generates dossiers, shows metrics, raw JSON, prompt, papers, and disclaimer |
-| Task 2.1: Model Deployment | Service scaffold done | `llm_service/serve_vllm.sh`, `config.example.env`, and `requirements-llm.txt` define the vLLM startup path |
+| Task 2.1: Model Deployment | Done with llama.cpp | `serve_llamacpp.ps1` starts `llama-server.exe` with Qwen3.5-9B Q4_K_M GGUF on CUDA |
 | Task 2.2: Prompt Engineering | Scaffolded | `build_prompt()` caps context chunks and formats paper metadata/text |
-| Task 2.3: Constrained Decoding | Done for service contract | vLLM mode sends `structured_outputs` with `ResearchDossier.model_json_schema()`; `smoke_vllm_schema.py` verifies the same contract |
-| Task 2.4: Benchmarking | Done for prototype | `benchmark_pipeline()` measures latency, JSON validity, mode, and retry attempts; vLLM smoke test reports latency |
+| Task 2.3: Constrained Decoding | Done for llama.cpp contract | `json_schema` mode sends `response_format` with a llama.cpp-compatible `ResearchDossier` schema |
+| Task 2.4: Benchmarking | Done with real local model | llama.cpp benchmark: 3/3 valid JSON, max 9.30s, under 60s |
 
 ## Acceptance Checks
 
@@ -36,7 +36,7 @@ Run:
 
 ```bash
 python smoke_test.py
-python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py llm_service/check_vllm.py llm_service/smoke_vllm_schema.py
+python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py
 ```
 
 Expected smoke-test checks:
@@ -47,46 +47,48 @@ Expected smoke-test checks:
 - `validation_attempts == 1`
 - 5x benchmark valid JSON success rate is `100%`
 - all mock runs finish under 60 seconds
+- llama.cpp schema smoke test passes
+- real llama.cpp benchmark has 100% valid JSON
 
 ## Live Mode Notes
 
 - Turn off **Use mock papers** in Streamlit to call Semantic Scholar.
 - Live API failures are surfaced by default. Turn on **Fallback to mock papers** only for demo fallback behavior.
 - Set `SEMANTIC_SCHOLAR_API_KEY` or use the sidebar API key field for authenticated Semantic Scholar requests.
+- Latest local live check passed with `fetch_mode=live`, `llm_mode=json_schema`, and 49.35s end-to-end latency.
 
 ## Local Model Notes
 
-vLLM is the intended course architecture for local Qwen inference, but it is not installed by `requirements.txt` because CUDA and OS compatibility vary. Use `requirements-llm.txt` inside a Linux/WSL CUDA environment.
+llama.cpp is the primary local inference server for the Qwen3.5 GGUF target. It loaded `Qwen3.5-9B-Q4_K_M.gguf` on RTX 4060 Laptop 8GB VRAM and served the OpenAI-compatible API at `http://127.0.0.1:8080/v1`.
 
 Default model config:
 
 ```text
-LITAGENT_VLLM_MODEL=jc-builds/Qwen3.5-9B-Q4_K_M-GGUF:Q4_K_M
-LITAGENT_VLLM_TOKENIZER=Qwen/Qwen3.5-9B
-LITAGENT_VLLM_MAX_MODEL_LEN=4096
-LITAGENT_VLLM_GPU_MEMORY_UTILIZATION=0.85
+LITAGENT_LLAMA_MODEL=models/Qwen3.5-9B-Q4_K_M.gguf
+LITAGENT_LLAMA_MODEL_ALIAS=qwen3.5-9b-q4km
+LITAGENT_LLAMA_CTX_SIZE=4096
+LITAGENT_LLAMA_GPU_LAYERS=999
 ```
 
 Start and validate:
 
-```bash
-cp llm_service/config.example.env llm_service/.env
-bash llm_service/serve_vllm.sh llm_service/.env
-python llm_service/check_vllm.py
-python llm_service/smoke_vllm_schema.py
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\llm_service\serve_llamacpp.ps1 llm_service\config.llamacpp.example.env
+python llm_service/check_llamacpp.py
+python llm_service/smoke_llamacpp_schema.py
 ```
 
 Streamlit preset:
 
 ```text
-Model provider: vLLM local
-Base URL: http://localhost:8000/v1
-API key: token-abc123
-Model: jc-builds/Qwen3.5-9B-Q4_K_M-GGUF:Q4_K_M
-JSON mode: vllm
+Model provider: llama.cpp local
+Base URL: http://127.0.0.1:8080/v1
+API key: llama-cpp
+Model: qwen3.5-9b-q4km
+JSON mode: json_schema
 ```
 
-GGUF support in vLLM is useful for memory reduction but still experimental/under-optimized. The detected local GPU is an RTX 4060 Laptop with 8GB VRAM, so the 9B Q4_K_M target may be tight; use a smaller GGUF model by changing the environment variables if needed.
+vLLM was tested as a fallback but failed on this GGUF with `Unknown gguf model_type: qwen3_5`. Keep the vLLM scripts as experimental reference only.
 
 ## Repository Hygiene
 

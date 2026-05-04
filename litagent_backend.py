@@ -58,6 +58,45 @@ class ResearchDossier(BaseModel):
     disclaimer: str
 
 
+def research_dossier_json_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["query", "topic", "summary", "key_papers", "limitations", "disclaimer"],
+        "properties": {
+            "query": {"type": "string"},
+            "topic": {"type": "string"},
+            "summary": {"type": "string"},
+            "key_papers": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["paper_id", "title", "year", "venue", "reason", "key_findings"],
+                    "properties": {
+                        "paper_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "year": {"type": "integer"},
+                        "venue": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "key_findings": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "limitations": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "disclaimer": {"type": "string"},
+        },
+    }
+
+
 class LitAgentState(TypedDict, total=False):
     query: str
     raw_papers: List[Dict[str, Any]]
@@ -356,6 +395,12 @@ def call_openai_compatible_node(
 
     if structured_mode == "vllm":
         payload["structured_outputs"] = {"json": ResearchDossier.model_json_schema()}
+    elif structured_mode == "json_schema":
+        payload["response_format"] = {
+            "type": "json_object",
+            "schema": research_dossier_json_schema(),
+        }
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     elif structured_mode == "json_object":
         payload["response_format"] = {"type": "json_object"}
 

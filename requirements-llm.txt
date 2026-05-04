@@ -1,5 +1,6 @@
-# Optional AI microservice dependencies.
-# Install this in a Linux/WSL CUDA environment, not the default Windows prototype venv.
+# Optional experimental vLLM fallback dependencies.
+# llama.cpp is the primary GGUF inference server and is installed as a standalone binary.
+# Install this only if you want to reproduce the vLLM fallback experiment.
 
 -r requirements.txt
 

@@ -17,6 +17,7 @@ fi
 : "${LITAGENT_VLLM_API_KEY:=token-abc123}"
 : "${LITAGENT_VLLM_MODEL:=jc-builds/Qwen3.5-9B-Q4_K_M-GGUF:Q4_K_M}"
 : "${LITAGENT_VLLM_TOKENIZER:=Qwen/Qwen3.5-9B}"
+: "${LITAGENT_VLLM_HF_CONFIG_PATH:=Qwen/Qwen3.5-9B}"
 : "${LITAGENT_VLLM_MAX_MODEL_LEN:=4096}"
 : "${LITAGENT_VLLM_GPU_MEMORY_UTILIZATION:=0.85}"
 : "${LITAGENT_VLLM_DTYPE:=auto}"
@@ -32,6 +33,7 @@ fi
 echo "Starting LitAgent vLLM microservice"
 echo "  model:     ${LITAGENT_VLLM_MODEL}"
 echo "  tokenizer: ${LITAGENT_VLLM_TOKENIZER}"
+echo "  hf config: ${LITAGENT_VLLM_HF_CONFIG_PATH}"
 echo "  endpoint:  http://${LITAGENT_VLLM_HOST}:${LITAGENT_VLLM_PORT}/v1"
 
 # LITAGENT_VLLM_EXTRA_ARGS is intentionally word-split so users can pass normal CLI flags.
@@ -41,6 +43,7 @@ exec vllm serve "${LITAGENT_VLLM_MODEL}" \
   --host "${LITAGENT_VLLM_HOST}" \
   --port "${LITAGENT_VLLM_PORT}" \
   --api-key "${LITAGENT_VLLM_API_KEY}" \
+  --hf-config-path "${LITAGENT_VLLM_HF_CONFIG_PATH}" \
   --max-model-len "${LITAGENT_VLLM_MAX_MODEL_LEN}" \
   --gpu-memory-utilization "${LITAGENT_VLLM_GPU_MEMORY_UTILIZATION}" \
   --dtype "${LITAGENT_VLLM_DTYPE}" \

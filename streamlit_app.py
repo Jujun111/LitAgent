@@ -20,6 +20,13 @@ PROVIDER_PRESETS = {
         "model": "jc-builds/Qwen3.5-9B-Q4_K_M-GGUF:Q4_K_M",
         "structured_mode": "vllm",
     },
+    "llama.cpp local": {
+        "provider": "openai_compatible",
+        "base_url": "http://127.0.0.1:8080/v1",
+        "api_key": "llama-cpp",
+        "model": "qwen3.5-9b-q4km",
+        "structured_mode": "json_schema",
+    },
     "Ollama local": {
         "provider": "openai_compatible",
         "base_url": "http://localhost:11434/v1",
@@ -69,8 +76,8 @@ with st.sidebar:
         model = st.text_input("Model", value=model)
         structured_mode = st.selectbox(
             "JSON mode",
-            ["vllm", "json_object", "none"],
-            index=["vllm", "json_object", "none"].index(structured_mode),
+            ["json_schema", "vllm", "json_object", "none"],
+            index=["json_schema", "vllm", "json_object", "none"].index(structured_mode),
         )
 
 query = st.text_input(
