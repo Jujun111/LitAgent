@@ -1,14 +1,7 @@
-# ==========================================
-# LitAgent Environment Dependencies
-# Required Python Version: >= 3.10, < 3.12
-# ==========================================
+# LitAgent course prototype runtime dependencies.
+# Python 3.10+ is recommended for the prototype runtime.
 
-# --- Software Engineering (FSM & UI) ---
 langgraph>=0.0.26
 pydantic>=2.0.0
 requests>=2.31.0
 streamlit>=1.32.0
-
-# --- AI Engineering (Model Serving) ---
-# Note: vLLM is highly dependent on your specific CUDA toolkit.
-vllm>=0.3.0

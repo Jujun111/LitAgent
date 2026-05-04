@@ -1,80 +1,103 @@
-# LitAgent: Automated Information Retrieval & Academic Synthesis
+# LitAgent
 
-LitAgent is a multi-agent, deterministic AI orchestration system designed to retrieve, analyze, and synthesize academic literature.
+LitAgent is a course prototype for automated academic literature retrieval and synthesis. It uses a deterministic LangGraph finite state machine (FSM) to control retrieval, prompt construction, LLM invocation, JSON validation, retry behavior, and dashboard output.
 
-Unlike traditional LLM wrappers that rely on brittle prompt-loops, LitAgent strictly decouples **Planning/Execution** from **AI Generation**. It utilizes a Finite State Machine (FSM) to ensure deterministic control flow while leveraging a locally hosted, quantized Large Language Model (Qwen 9B) via constrained decoding to guarantee hallucination-free, structurally valid JSON outputs.
+The project is demo-ready with mock data by default. It can also call Semantic Scholar for live metadata and an OpenAI-compatible local model server such as vLLM, Ollama, or LM Studio when those services are available.
 
-##  System Architecture
+## Current Architecture
 
-The system is strictly divided into two decoupled components communicating via a formal API contract:
+- `litagent_backend.py` is the canonical implementation. It contains the Semantic Scholar client, rate limiter, LangGraph graph builder, mock LLM, OpenAI-compatible LLM call, Pydantic schema validation, pipeline runner, and benchmark helper.
+- `streamlit_app.py` is the dashboard UI for generating dossiers and running the 5x benchmark.
+- `litagent_fsm.py` is a small CLI demo that calls the canonical backend in mock LangGraph mode.
+- `api_contracts.py` preserves the original single-paper AI contract used during earlier parallel development.
+- `smoke_test.py` verifies the mock LangGraph path and benchmark acceptance checks.
 
-1. **The Deterministic Controller (LangGraph):** Orchestrates the FSM, handles external API rate limits (Semantic Scholar), manages state memory, and compiles the final dossier.
-    
-2. **The AI Microservice (vLLM):** A local inference server running Qwen 9B. It executes constrained decoding (via Pydantic) to mathematically guarantee the JSON structure of the synthesis.
-    
+## Requirements Mapping
 
-##  Repository Structure
+| Requirement | Implementation |
+|---|---|
+| Req01: Retrieve up to 10 papers | `SemanticScholarClient.search_papers(... limit=10)` in live mode |
+| Req02: FSM orchestration | `build_litagent_graph()` with LangGraph nodes |
+| Req03: Prompt AI after retrieval/chunking | `Build_Prompt` then `Call_LLM` graph transition |
+| Req04: Strict JSON schema | `ResearchDossier` Pydantic validation |
+| Req05: Dashboard dossier | `streamlit_app.py` dossier tab and metrics |
+| Req06: Stop after 3 validation retries | conditional edge after `Validate_JSON` |
+| NfReq01: 100 requests / 5 minutes | `SemanticScholarRateLimiter` |
+| NfReq02: Python + LangGraph | Python implementation using LangGraph |
+| NfReq03: 60-second LLM latency | local model HTTP timeout and latency metric |
+| NfReq04: Extraction fidelity target | supported through structured output mode; full fidelity evaluation requires a real model |
+| NfReq05: AI disclaimer | `AI_DISCLAIMER` rendered in every validated dossier |
 
-Development is divided across specific feature branches to maintain the Separation of Concerns:
+## Setup
 
-- `main`: Contains the formal data contract (`api_contracts.py`) and production-ready code.
-    
-- `feat/langgraph-fsm`: Development branch for the orchestration logic, external API integrations, and user interface.
-    
-- `feat/llm-service`: Development branch for the local vLLM deployment, prompt engineering, and hardware optimization.
-    
+Python 3.10+ is recommended for the prototype. The local smoke checks in this workspace passed on Python 3.13; optional vLLM deployment may require a narrower Python/CUDA combination.
 
-##  Getting Started
-
-### Prerequisites
-
-- Python 3.10+
-    
-- Local GPU hardware capable of running a language model.
-    
-
-### 1. The FSM Orchestrator Setup (Software Engineering)
-
-Ensure you are on the `feat/langgraph-fsm` branch.
-
-```
-# Install dependencies
-pip install langgraph pydantic requests
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-To run the orchestrator in isolation (using the mocked AI response):
+On macOS/Linux, activate with:
 
-```
-python litagent_fsm.py
-```
-
-### 2. The AI Microservice Setup (AI Engineering)
-
-Ensure you are on the `feat/llm-service` branch.
-
-```
-# Install vLLM (Linux/WSL recommended)
-pip install vllm
+```bash
+source .venv/bin/activate
 ```
 
-_Note: The exact launch command for the vLLM server will be documented here once the local port and constrained decoding parameters are finalized by the AI Engineering team._
+## Run the Prototype
 
-##  The API Contract
+Run the smoke test:
 
-All communication between the FSM and the AI Microservice is strictly governed by `api_contracts.py`.
+```bash
+python smoke_test.py
+```
 
-- **The FSM** guarantees it will send a `SynthesisRequestPayload` containing the `paper_id`, `chunked_text`, and a latency threshold.
-    
-- **The AI Microservice** guarantees it will return a `ResearchSynthesis` JSON object containing the `paper_title`, `executive_summary`, `methodology_used`, and `key_findings`.
-    
+Run the CLI demo:
 
-Do not alter `api_contracts.py` without mutual agreement between both team members.
+```bash
+python litagent_fsm.py "graph neural networks for molecular property prediction"
+python litagent_fsm.py --benchmark
+```
 
-##  Team & Responsibilities
+Start the Streamlit dashboard:
 
-- **Software/Systems Engineering:** FSM orchestration, UI development (Streamlit/Gradio), Semantic Scholar API integration, and error fallback logic.
-    
-- **Artificial Intelligence Engineering:** Model deployment (vLLM), hardware latency optimization, prompt engineering, and constrained decoding enforcement.
-    
+```bash
+streamlit run streamlit_app.py --server.port 8501 --server.address 127.0.0.1
+```
 
-_Disclaimer: LitAgent is developed as part of the "Engineering of AI-Intensive Systems" course. All generated dossiers contain explicit transparency warnings indicating AI involvement._
+Then open:
+
+```text
+http://127.0.0.1:8501
+```
+
+## Live Retrieval and Local LLM Options
+
+Mock papers are enabled by default so the course prototype works without external services.
+
+For live Semantic Scholar retrieval, turn off **Use mock papers** in the sidebar. If the API fails, the app reports the error by default. Turn on **Fallback to mock papers** only when you explicitly want demo fallback behavior.
+
+For local model inference, choose an OpenAI-compatible provider in the sidebar and provide the base URL, API key, model name, and JSON mode. vLLM is the architecture target, but it is intentionally not included in `requirements.txt` because installation is CUDA/Linux/WSL-specific.
+
+Example vLLM command on a compatible machine:
+
+```bash
+vllm serve Qwen/Qwen2.5-7B-Instruct --api-key token-abc123
+```
+
+Then use:
+
+```text
+Model provider: vLLM local
+Base URL: http://localhost:8000/v1
+API key: token-abc123
+JSON mode: vllm
+```
+
+## Current Limitations
+
+- The default demo synthesizes abstracts, not full downloaded PDFs.
+- The 95% extraction fidelity requirement can only be evaluated with a real model and a labeled benchmark set.
+- Local vLLM deployment is optional and environment-dependent.
+- Assignment PDF files are intentionally ignored and should remain local unless a private course repository requires them.
