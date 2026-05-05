@@ -25,7 +25,7 @@ PROVIDER_PRESETS = {
         "provider": "openai_compatible",
         "base_url": "http://127.0.0.1:8080/v1",
         "api_key": "llama-cpp",
-        "model": "qwen3.5-9b-q4km",
+        "model": "qwen3.5-9b-vlm",
         "structured_mode": "json_schema",
     },
     "Ollama local": {
@@ -62,6 +62,7 @@ with st.sidebar:
 
     use_mock_fetch = st.toggle("Use mock papers", value=True)
     use_pdf_input = st.toggle("Use PDF paper", value=False)
+    use_vision = st.toggle("Use pixel vision", value=False, disabled=not use_pdf_input)
     use_langgraph = st.toggle("Use LangGraph FSM", value=True)
     fallback_to_mock = st.toggle("Fallback to mock papers", value=False)
     semantic_scholar_api_key = st.text_input("Semantic Scholar API key", type="password")
@@ -83,6 +84,14 @@ with st.sidebar:
             ["json_schema", "vllm", "json_object", "none"],
             index=["json_schema", "vllm", "json_object", "none"].index(structured_mode),
         )
+
+    vision_base_url = base_url
+    vision_api_key = api_key
+    vision_model = model
+    if use_pdf_input and use_vision:
+        vision_base_url = st.text_input("Vision Base URL", value=vision_base_url)
+        vision_api_key = st.text_input("Vision API key", value=vision_api_key, type="password")
+        vision_model = st.text_input("Vision model", value=vision_model)
 
 query = st.text_input(
     "Research topic",
@@ -111,8 +120,15 @@ if run_clicked:
                     raise ValueError("PDF input is enabled but no PDF was provided.")
                 from pdf_ingest import parse_pdf_to_paper_record
 
-                fixed_papers = [parse_pdf_to_paper_record(pdf_path)]
-                fixed_fetch_mode = "pdf_fixed"
+                fixed_papers = [
+                    parse_pdf_to_paper_record(
+                        pdf_path,
+                        export_visuals=use_vision,
+                        visual_output_dir=Path("evidence/streamlit_visual_crops") / Path(pdf_path).stem,
+                        include_page_images=use_vision,
+                    )
+                ]
+                fixed_fetch_mode = "pdf_vision_fixed" if use_vision else "pdf_fixed"
                 effective_use_mock_fetch = False
 
             result = run_pipeline(
@@ -129,6 +145,10 @@ if run_clicked:
                 structured_mode=structured_mode,
                 max_context_chunks=max_context_chunks,
                 use_langgraph=use_langgraph,
+                use_vision=use_vision,
+                vision_base_url=vision_base_url,
+                vision_api_key=vision_api_key,
+                vision_model=vision_model,
             )
             st.session_state["last_result"] = result
         except Exception as exc:
@@ -159,18 +179,19 @@ result = st.session_state.get("last_result")
 benchmark = st.session_state.get("last_benchmark")
 
 if result:
-    metrics = st.columns(6)
+    metrics = st.columns(7)
     metrics[0].metric("Fetch", result.get("fetch_mode", "-"))
     metrics[1].metric("LLM", result.get("llm_mode", "-"))
     metrics[2].metric("FSM", result.get("orchestrator", "-"))
     metrics[3].metric("Valid JSON", str(result.get("is_schema_valid", False)))
     metrics[4].metric("Attempts", result.get("validation_attempts", 0))
     metrics[5].metric("Total sec", f"{result.get('end_to_end_latency_seconds', 0):.2f}")
+    metrics[6].metric("Vision assets", result.get("vision_asset_count", 0))
 
     if result.get("error"):
         st.error(result["error"])
 
-    tabs = st.tabs(["Dossier", "Raw JSON", "Prompt", "Papers", "Chunks", "Sources"])
+    tabs = st.tabs(["Dossier", "Raw JSON", "Prompt", "Papers", "Chunks", "Visuals", "Sources"])
     with tabs[0]:
         dossier = result.get("dossier")
         if dossier:
@@ -227,6 +248,32 @@ if result:
             st.info("No chunks available.")
 
     with tabs[5]:
+        visual_assets = [
+            asset
+            for paper in result.get("raw_papers", [])
+            for asset in paper.get("visual_assets", []) or []
+        ]
+        observations = result.get("vision_observations", [])
+        if visual_assets:
+            for asset in visual_assets[:12]:
+                st.markdown(f"**{asset.get('source_ref', 'visual asset')}**")
+                image_path = asset.get("image_path")
+                if image_path and Path(image_path).exists():
+                    st.image(image_path, caption=asset.get("visual_type", "image"))
+                st.json(
+                    {
+                        "page_number": asset.get("page_number"),
+                        "visual_type": asset.get("visual_type"),
+                        "bbox": asset.get("bbox"),
+                    }
+                )
+        else:
+            st.info("No visual assets available.")
+        if observations:
+            st.markdown("**Vision observations**")
+            st.json(observations)
+
+    with tabs[6]:
         finding_sources = result.get("finding_sources", [])
         if finding_sources:
             st.dataframe(finding_sources, use_container_width=True)

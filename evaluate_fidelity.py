@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import runpy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-key", default="llama-cpp", help="OpenAI-compatible bearer token.")
     parser.add_argument("--model", default="qwen3.5-9b-q4km", help="Model name or llama.cpp alias.")
     parser.add_argument("--target-recall", type=float, default=0.95, help="Required fact recall threshold.")
+    parser.add_argument("--use-vision", action="store_true", help="Enable pixel-level vision extraction.")
+    parser.add_argument(
+        "--vision-provider",
+        choices=["openai-compatible", "mock"],
+        default="openai-compatible",
+        help="Vision model provider preset.",
+    )
+    parser.add_argument(
+        "--vision-base-url",
+        default="",
+        help="Vision OpenAI-compatible base URL. Defaults to --base-url for unified Qwen3.5 VLM serving.",
+    )
+    parser.add_argument("--vision-api-key", default="", help="Defaults to --api-key when omitted.")
+    parser.add_argument("--vision-model", default="", help="Defaults to --model when omitted.")
+    parser.add_argument("--vision-timeout", type=int, default=120)
     parser.add_argument("--limit", type=int, default=0, help="Evaluate only the first N examples when set.")
     return parser.parse_args()
 
@@ -96,24 +112,63 @@ def resolve_benchmark_path(value: str, benchmark_path: Path) -> Path:
     return candidate
 
 
-def load_example_papers(example: dict[str, Any], benchmark_path: Path) -> tuple[list[dict[str, Any]], str]:
+def ensure_generated_fixture(path: Path, benchmark_path: Path) -> None:
+    if path.exists():
+        return
+    generator = benchmark_path.parent / "make_fixtures.py"
+    if not generator.exists():
+        return
+    namespace = runpy.run_path(str(generator))
+    ensure_fixtures = namespace.get("ensure_fixtures")
+    if callable(ensure_fixtures):
+        ensure_fixtures(benchmark_path.parent)
+
+
+def load_example_papers(
+    example: dict[str, Any],
+    benchmark_path: Path,
+    export_visuals: bool = False,
+) -> tuple[list[dict[str, Any]], str]:
     if "source_papers" in example:
         return example["source_papers"], "fixed"
 
     from pdf_ingest import parse_pdf_to_paper_record
 
     pdf_values = example.get("source_pdfs") or [example["source_pdf"]]
-    papers = [
-        parse_pdf_to_paper_record(resolve_benchmark_path(pdf_value, benchmark_path))
-        for pdf_value in pdf_values
-    ]
-    return papers, "pdf_fixed"
+    papers: list[dict[str, Any]] = []
+    for pdf_value in pdf_values:
+        pdf_path = resolve_benchmark_path(pdf_value, benchmark_path)
+        ensure_generated_fixture(pdf_path, benchmark_path)
+        paper = parse_pdf_to_paper_record(
+            pdf_path,
+            export_visuals=export_visuals,
+            visual_output_dir=Path("evidence/visual_crops") / example["id"],
+            include_page_images=export_visuals,
+        )
+        if export_visuals:
+            expected_facts = [
+                fact_text(fact)
+                for fact in example.get("gold_required_facts", [])
+                if fact_category(fact) == "vision"
+            ]
+            for asset in paper.get("visual_assets", []) or []:
+                asset["expected_visual_facts"] = expected_facts
+        papers.append(paper)
+    return papers, "pdf_vision_fixed" if export_visuals else "pdf_fixed"
 
 
 def fact_text(fact: str | dict[str, Any]) -> str:
     if isinstance(fact, dict):
         return str(fact.get("text", ""))
     return str(fact)
+
+
+def fact_aliases(fact: str | dict[str, Any]) -> list[str]:
+    text = fact_text(fact)
+    aliases = [text]
+    if isinstance(fact, dict):
+        aliases.extend(str(alias) for alias in fact.get("aliases", []) if str(alias).strip())
+    return aliases
 
 
 def fact_category(fact: str | dict[str, Any]) -> str:
@@ -125,7 +180,7 @@ def fact_category(fact: str | dict[str, Any]) -> str:
 def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     provider = "mock" if args.provider == "mock" else "openai_compatible"
     structured_mode = "json_schema" if provider == "openai_compatible" else "none"
-    fixed_papers, fixed_fetch_mode = load_example_papers(example, args.benchmark)
+    fixed_papers, fixed_fetch_mode = load_example_papers(example, args.benchmark, export_visuals=args.use_vision)
     result = run_pipeline(
         example["query"],
         provider=provider,
@@ -137,6 +192,12 @@ def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[
         model=args.model,
         structured_mode=structured_mode,
         use_langgraph=True,
+        use_vision=args.use_vision,
+        vision_provider="mock" if args.vision_provider == "mock" else "openai_compatible",
+        vision_base_url=args.vision_base_url or args.base_url,
+        vision_api_key=args.vision_api_key or args.api_key,
+        vision_model=args.vision_model or args.model,
+        vision_timeout=args.vision_timeout,
     )
 
     dossier = result.get("dossier") if result.get("is_schema_valid") else None
@@ -152,7 +213,7 @@ def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[
         category = fact_category(fact)
         category_counts.setdefault(category, {"matched": 0, "total": 0})
         category_counts[category]["total"] += 1
-        if normalize_text(text) in generated_text:
+        if any(normalize_text(alias) in generated_text for alias in fact_aliases(fact)):
             matched_facts.append(text)
             category_counts[category]["matched"] += 1
         else:
@@ -169,6 +230,10 @@ def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[
         "latency_seconds": result.get("end_to_end_latency_seconds"),
         "llm_latency_seconds": result.get("llm_latency_seconds"),
         "validation_attempts": result.get("validation_attempts"),
+        "vision_mode": result.get("vision_mode", "disabled"),
+        "vision_asset_count": result.get("vision_asset_count", 0),
+        "vision_latency_seconds": result.get("vision_latency_seconds", 0.0),
+        "vision_observations": result.get("vision_observations", []),
         "field_coverage": field_coverage(dossier),
         "finding_sources": result.get("finding_sources", []),
         "matched_facts": matched_facts,
@@ -212,6 +277,11 @@ def summarize(records: list[dict[str, Any]], target_recall: float) -> dict[str, 
             category: counts["matched"] / counts["total"] if counts["total"] else 0.0
             for category, counts in sorted(category_counts.items())
         },
+        "vision_fact_recall": (
+            category_counts.get("vision", {}).get("matched", 0) / category_counts.get("vision", {}).get("total", 1)
+            if category_counts.get("vision", {}).get("total", 0)
+            else None
+        ),
         "finding_source_trace_rate": (
             finding_source_traced / finding_source_total if finding_source_total else 0.0
         ),

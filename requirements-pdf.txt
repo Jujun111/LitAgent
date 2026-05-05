@@ -4,3 +4,6 @@
 -r requirements.txt
 
 docling>=2.92.0,<3.0.0
+pypdfium2>=4.30.0
+Pillow>=10.0.0
+reportlab>=4.0.0

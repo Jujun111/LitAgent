@@ -14,9 +14,11 @@ models/
 tools/
 evidence/
 benchmarks/**/parsed/
+benchmarks/pixel_vision/generated/
 llm_service/logs/
 llm_service/.env
 llm_service/.llamacpp.env
+llm_service/.llamacpp-vision.env
 
 A1.pdf
 A3_diagram.pdf

@@ -166,6 +166,11 @@ class LitAgentState(TypedDict, total=False):
     llm_raw_output: str
     dossier: Dict[str, Any]
     finding_sources: List[Dict[str, Any]]
+    vision_observations: List[Dict[str, Any]]
+    vision_raw_outputs: List[Dict[str, Any]]
+    vision_asset_count: int
+    vision_mode: str
+    vision_latency_seconds: float
     is_schema_valid: bool
     error: str
     validation_error: str
@@ -385,7 +390,54 @@ def chunk_text_node(state: LitAgentState, chunk_size: int = 1200) -> LitAgentSta
                         "source_ref": item.get("source_ref", ""),
                     }
                 )
+    try:
+        from vision_ingest import vision_observations_to_chunks
+    except ImportError:
+        vision_observations_to_chunks = None
+
+    if vision_observations_to_chunks:
+        vision_chunks = vision_observations_to_chunks(state.get("vision_observations", []))
+        paper_titles = {paper.get("paper_id"): paper for paper in state.get("raw_papers", [])}
+        for chunk in vision_chunks:
+            paper = paper_titles.get(chunk.get("paper_id"), {})
+            chunk["title"] = paper.get("title", chunk.get("title", "Untitled"))
+            chunk["year"] = paper.get("year", chunk.get("year"))
+            chunk["venue"] = paper.get("venue", chunk.get("venue", ""))
+        chunks = vision_chunks + chunks
     return {"chunks": chunks}
+
+
+def extract_vision_node(
+    state: LitAgentState,
+    use_vision: bool = False,
+    vision_provider: str = "openai_compatible",
+    vision_base_url: Optional[str] = None,
+    vision_api_key: Optional[str] = None,
+    vision_model: Optional[str] = None,
+    vision_timeout: int = 120,
+) -> LitAgentState:
+    if not use_vision:
+        return {
+            "vision_observations": [],
+            "vision_raw_outputs": [],
+            "vision_asset_count": 0,
+            "vision_mode": "disabled",
+            "vision_latency_seconds": 0.0,
+        }
+    try:
+        from vision_ingest import extract_vision_observations
+    except ImportError as exc:
+        raise RuntimeError("Vision ingestion is unavailable. Ensure vision_ingest.py is present.") from exc
+
+    return extract_vision_observations(
+        query=state["query"],
+        papers=state.get("raw_papers", []),
+        provider=vision_provider,
+        base_url=vision_base_url or "http://127.0.0.1:8080/v1",
+        api_key=vision_api_key or "llama-cpp",
+        model=vision_model or "qwen3.5-9b-vlm",
+        timeout=vision_timeout,
+    )
 
 
 def build_prompt(query: str, chunks: List[Dict[str, Any]], max_chunks: int = 8) -> str:
@@ -413,7 +465,7 @@ Context:
 
 Create a concise research dossier from the context.
 Return JSON only. No markdown. No extra commentary.
-Preserve concrete source facts, methods, datasets, metrics, and limitations that are explicitly stated in the context.
+Preserve concrete source facts, methods, datasets, metrics, visual observations, and limitations that are explicitly stated in the context.
 When chunks include source_ref or page_number, include the most relevant source_ref in each key finding.
 
 Required JSON fields:
@@ -436,6 +488,19 @@ def build_prompt_node(state: LitAgentState, max_chunks: int = 8) -> LitAgentStat
 def mock_call_llm_node(state: LitAgentState) -> LitAgentState:
     query = state.get("query", "unknown query")
     papers = state.get("raw_papers", [])
+    chunk_findings: Dict[str, List[str]] = {}
+    for chunk in state.get("chunks", []):
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        paper_id = chunk.get("paper_id", "unknown-id")
+        findings = chunk_findings.setdefault(paper_id, [])
+        for line in text.splitlines():
+            fact = line.strip(" -")
+            if fact and fact not in findings:
+                findings.append(fact)
+            if len(findings) >= 4:
+                break
     payload = {
         "query": query,
         "topic": query,
@@ -447,7 +512,8 @@ def mock_call_llm_node(state: LitAgentState) -> LitAgentState:
                 "year": paper.get("year"),
                 "venue": paper.get("venue"),
                 "reason": "Included because its abstract matches the query in the current context.",
-                "key_findings": [
+                "key_findings": chunk_findings.get(paper.get("paper_id", ""), [])[:4]
+                or [
                     "This is a placeholder finding.",
                     "Switch provider from Mock to a local server when one is running.",
                 ],
@@ -545,10 +611,16 @@ def build_litagent_graph(
     semantic_scholar_api_key: Optional[str] = None,
     base_url: str = "http://localhost:8000/v1",
     api_key: str = "token-abc123",
-    model: str = "Qwen/Qwen2.5-1.5B-Instruct",
+    model: str = "qwen3.5-9b-q4km",
     structured_mode: str = "vllm",
     max_context_chunks: int = 8,
     max_validation_attempts: int = 3,
+    use_vision: bool = False,
+    vision_provider: str = "openai_compatible",
+    vision_base_url: Optional[str] = None,
+    vision_api_key: Optional[str] = None,
+    vision_model: Optional[str] = None,
+    vision_timeout: int = 120,
 ):
     from langgraph.graph import END, START, StateGraph
 
@@ -563,6 +635,18 @@ def build_litagent_graph(
             fallback_to_mock_on_error=fallback_to_mock_on_error,
             fixed_papers=fixed_papers,
             fixed_fetch_mode=fixed_fetch_mode,
+        ),
+    )
+    graph.add_node(
+        "Extract_Vision",
+        lambda state: extract_vision_node(
+            state,
+            use_vision=use_vision,
+            vision_provider=vision_provider,
+            vision_base_url=vision_base_url or base_url,
+            vision_api_key=vision_api_key or api_key,
+            vision_model=vision_model or model,
+            vision_timeout=vision_timeout,
         ),
     )
     graph.add_node("Chunk_Text", chunk_text_node)
@@ -591,7 +675,8 @@ def build_litagent_graph(
         return "retry"
 
     graph.add_edge(START, "Fetch_Data")
-    graph.add_edge("Fetch_Data", "Chunk_Text")
+    graph.add_edge("Fetch_Data", "Extract_Vision")
+    graph.add_edge("Extract_Vision", "Chunk_Text")
     graph.add_edge("Chunk_Text", "Build_Prompt")
     graph.add_edge("Build_Prompt", "Call_LLM")
     graph.add_edge("Call_LLM", "Validate_JSON")
@@ -617,10 +702,16 @@ def run_pipeline(
     semantic_scholar_api_key: Optional[str] = None,
     base_url: str = "http://localhost:8000/v1",
     api_key: str = "token-abc123",
-    model: str = "Qwen/Qwen2.5-1.5B-Instruct",
+    model: str = "qwen3.5-9b-q4km",
     structured_mode: str = "vllm",
     max_context_chunks: int = 8,
     use_langgraph: bool = True,
+    use_vision: bool = False,
+    vision_provider: str = "openai_compatible",
+    vision_base_url: Optional[str] = None,
+    vision_api_key: Optional[str] = None,
+    vision_model: Optional[str] = None,
+    vision_timeout: int = 120,
 ) -> Dict[str, Any]:
     pipeline_start = time.perf_counter()
     state: LitAgentState = {"query": query, "validation_attempts": 0}
@@ -638,6 +729,12 @@ def run_pipeline(
             model=model,
             structured_mode=structured_mode,
             max_context_chunks=max_context_chunks,
+            use_vision=use_vision,
+            vision_provider=vision_provider,
+            vision_base_url=vision_base_url or base_url,
+            vision_api_key=vision_api_key or api_key,
+            vision_model=vision_model or model,
+            vision_timeout=vision_timeout,
         )
         state = app.invoke(state)
         state["orchestrator"] = "langgraph"
@@ -650,6 +747,17 @@ def run_pipeline(
                 fallback_to_mock_on_error=fallback_to_mock_on_error,
                 fixed_papers=fixed_papers,
                 fixed_fetch_mode=fixed_fetch_mode,
+            )
+        )
+        state.update(
+            extract_vision_node(
+                state,
+                use_vision=use_vision,
+                vision_provider=vision_provider,
+                vision_base_url=vision_base_url or base_url,
+                vision_api_key=vision_api_key or api_key,
+                vision_model=vision_model or model,
+                vision_timeout=vision_timeout,
             )
         )
         state.update(chunk_text_node(state))

@@ -2,7 +2,7 @@
 
 ## Current Working Target
 
-Course-ready prototype plus validated llama.cpp AI microservice, fidelity evaluation, and Docling-first full-paper layout parsing.
+Course-ready prototype plus validated llama.cpp AI microservice, fidelity evaluation, Docling-first full-paper layout parsing, and optional pixel-level vision extraction.
 
 Default demo path:
 
@@ -31,6 +31,7 @@ http://127.0.0.1:8501
 | Task 2.4: Benchmarking | Done with real local model | llama.cpp benchmark: 3/3 valid JSON, max 9.30s, under 60s |
 | Task 2.5: Extraction Fidelity | Done for text-only scope | `evaluate_fidelity.py` checks fixed gold abstracts; latest run matched 59/60 required facts |
 | Task 2.6: Full-Paper Layout | Done for Docling-first scope | `pdf_ingest.py` parses PDFs into text, table, caption, page, and source-ref chunks |
+| Task 2.7: Pixel-Level Vision | Implemented as optional add-on | `vision_ingest.py` calls a llama.cpp multimodal endpoint and converts validated observations into `vision` chunks |
 
 ## Acceptance Checks
 
@@ -38,7 +39,7 @@ Run:
 
 ```bash
 python smoke_test.py
-python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py evaluate_fidelity.py pdf_ingest.py smoke_pdf_ingest.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py
+python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py evaluate_fidelity.py pdf_ingest.py vision_ingest.py smoke_pdf_ingest.py smoke_pixel_vision.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py llm_service/check_llamacpp_vision.py llm_service/smoke_llamacpp_vision_schema.py
 ```
 
 Expected smoke-test checks:
@@ -53,6 +54,7 @@ Expected smoke-test checks:
 - real llama.cpp benchmark has 100% valid JSON
 - text-only fidelity eval has `schema_valid_rate == 100%` and `required_fact_recall >= 95%`
 - full-paper layout eval has `schema_valid_rate == 100%`, `required_fact_recall >= 90%`, and `finding_source_trace_rate == 100%`
+- pixel vision smoke exports PDF crops and produces mock `VisionObservation` chunks
 
 ## Fidelity Notes
 
@@ -62,7 +64,11 @@ Expected smoke-test checks:
 - Run `python smoke_pdf_ingest.py` to verify Docling PDF parsing on 3 fixture PDFs.
 - Run `python evaluate_fidelity.py --benchmark benchmarks/full_paper_layout/gold.jsonl --provider llama.cpp --target-recall 0.90`.
 - Latest full-paper layout run passed with `schema_valid_rate=1.0`, `required_fact_recall=1.0`, category recall of 1.0 for text/table/caption, and `finding_source_trace_rate=1.0`.
-- This score covers layout/table/caption understanding; pixel-level figure reasoning remains a separate future task.
+- This score covers layout/table/caption understanding.
+- Run `python smoke_pixel_vision.py` to verify synthetic pixel fixture generation, PDF crop export, and mock vision chunk conversion.
+- Run `python evaluate_fidelity.py --benchmark benchmarks/pixel_vision/gold.jsonl --provider llama.cpp --model qwen3.5-9b-vlm --use-vision --vision-provider mock --target-recall 0.80` for an offline pixel-pipeline check.
+- When a unified Qwen3.5 VLM llama.cpp server is running on `http://127.0.0.1:8080/v1`, remove `--vision-provider mock` to test real pixel-level extraction.
+- Latest real Qwen3.5 VLM pixel run passed with `schema_valid_rate=1.0`, `vision_fact_recall=0.8889`, `finding_source_trace_rate=1.0`, and average latency 25.44s.
 
 ## Live Mode Notes
 
@@ -98,11 +104,32 @@ Streamlit preset:
 Model provider: llama.cpp local
 Base URL: http://127.0.0.1:8080/v1
 API key: llama-cpp
-Model: qwen3.5-9b-q4km
+Model: qwen3.5-9b-vlm
 JSON mode: json_schema
 ```
 
 vLLM was tested as a fallback but failed on this GGUF with `Unknown gguf model_type: qwen3_5`. Keep the vLLM scripts as experimental reference only.
+
+## Pixel Vision Model Notes
+
+The pixel-level route now defaults to one unified Qwen3.5-9B llama.cpp VLM server. Qwen3.5-9B is native multimodal, but llama.cpp still needs a matching `mmproj` GGUF projector for image input. On RTX 4060 Laptop 8GB VRAM, stop the older text-only server before launching the VLM server.
+
+Default vision config:
+
+```text
+LITAGENT_VISION_PORT=8080
+LITAGENT_VISION_MODEL_ALIAS=qwen3.5-9b-vlm
+LITAGENT_VISION_MODEL=models/Qwen3.5-9B-Q4_K_M.gguf
+LITAGENT_VISION_MMPROJ=models/mmproj-F16.gguf
+```
+
+Start and validate:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\llm_service\serve_llamacpp_vision.ps1 llm_service\config.llamacpp-vision.example.env
+python llm_service/check_llamacpp_vision.py
+python llm_service/smoke_llamacpp_vision_schema.py
+```
 
 ## Repository Hygiene
 

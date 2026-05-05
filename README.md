@@ -13,6 +13,7 @@ The project is demo-ready with mock data by default and has been validated end-t
 - `smoke_test.py` verifies the mock LangGraph path and benchmark acceptance checks.
 - `llm_service/` contains the llama.cpp AI microservice launch scripts, config example, health check, schema-constrained smoke test, and experimental vLLM fallback assets.
 - `pdf_ingest.py` optionally parses full-paper PDFs with Docling into text, table, caption, page, and source-reference chunks.
+- `vision_ingest.py` optionally calls a llama.cpp multimodal endpoint, validates pixel-level visual observations, and converts them into `vision` evidence chunks.
 
 ## Requirements Mapping
 
@@ -29,6 +30,7 @@ The project is demo-ready with mock data by default and has been validated end-t
 | NfReq03: 60-second LLM latency | local model HTTP timeout, latency metrics, and llama.cpp benchmark evidence |
 | NfReq04: Extraction fidelity target | source-grounded prompts plus schema-constrained JSON; full fidelity evaluation requires a labeled benchmark set |
 | NfReq05: AI disclaimer | `AI_DISCLAIMER` rendered in every validated dossier |
+| Pixel-level figure/table understanding | optional llama.cpp vision service extracts visual facts from PDF crops before text synthesis |
 
 ## Setup
 
@@ -160,7 +162,7 @@ The current acceptance target is `schema_valid_rate == 100%` and `required_fact_
 
 ## Full-Paper Layout Evaluation
 
-The Docling-first full-paper path parses PDFs into text chunks, table markdown, figure/table captions, page numbers, and `source_ref` values before calling the existing LangGraph controller. It does not perform pixel-level chart or figure reasoning; that remains a future multimodal model stage.
+The Docling-first full-paper path parses PDFs into text chunks, table markdown, figure/table captions, page numbers, and `source_ref` values before calling the existing LangGraph controller. This layout path is still useful without a vision model because many table and figure claims are present in extracted text/captions.
 
 Run the parser smoke test and full-paper layout benchmark:
 
@@ -190,9 +192,69 @@ Streamlit preset:
 Model provider: llama.cpp local
 Base URL: http://127.0.0.1:8080/v1
 API key: llama-cpp
-Model: qwen3.5-9b-q4km
+Model: qwen3.5-9b-vlm
 JSON mode: json_schema
 ```
+
+## Pixel-Level Vision Add-On
+
+Pixel-level figure/table understanding now defaults to a unified Qwen3.5-9B llama.cpp VLM server on port `8080`. Qwen3.5-9B is a native multimodal model, but llama.cpp still expects the vision projector to be loaded as a separate `mmproj` GGUF file. With `mmproj-F16.gguf` loaded, the same server can handle text dossier synthesis and image crop extraction.
+
+The official Qwen3.5-9B model card lists the model as image-text-to-text and documents image input through chat messages: [Qwen/Qwen3.5-9B](https://huggingface.co/Qwen/Qwen3.5-9B). llama.cpp documents multimodal support through `llama-server` and the OpenAI-compatible `/chat/completions` API, using either `--hf-repo` or a local `--model` plus `--mmproj` projector: [llama.cpp multimodal docs](https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md).
+
+Default unified VLM config:
+
+```text
+LITAGENT_VISION_PORT=8080
+LITAGENT_VISION_MODEL_ALIAS=qwen3.5-9b-vlm
+LITAGENT_VISION_MODEL=models/Qwen3.5-9B-Q4_K_M.gguf
+LITAGENT_VISION_MMPROJ=models/mmproj-F16.gguf
+```
+
+Download the projector from a Qwen3.5-9B VLM GGUF repo, for example `jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF` or `bartowski/Qwen_Qwen3.5-9B-GGUF`. If you prefer llama.cpp to auto-download model and projector together, set `LITAGENT_VISION_HF_REPO=jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF` and leave local model/mmproj paths empty.
+
+Start the unified VLM server. On 8GB VRAM, stop any text-only llama.cpp server first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\llm_service\serve_llamacpp_vision.ps1 llm_service\config.llamacpp-vision.example.env
+```
+
+Linux/WSL:
+
+```bash
+bash llm_service/serve_llamacpp_vision.sh llm_service/config.llamacpp-vision.example.env
+```
+
+Validate the vision service and crop pipeline:
+
+```bash
+python llm_service/check_llamacpp_vision.py
+python llm_service/smoke_llamacpp_vision_schema.py
+python smoke_pixel_vision.py
+```
+
+Run the synthetic pixel benchmark. Use real llama.cpp text synthesis with mock vision for offline pipeline checks, or remove `--vision-provider mock` when the unified VLM server is running:
+
+```bash
+python evaluate_fidelity.py --benchmark benchmarks/pixel_vision/gold.jsonl --provider llama.cpp --model qwen3.5-9b-vlm --use-vision --vision-provider mock --target-recall 0.80
+```
+
+The evaluator reports `vision_fact_recall`, category recall for `vision`, schema validity, latency, validation attempts, generated dossier text, and missed visual facts. This is a first-stage pixel benchmark, not a claim of 95% full-paper multimodal fidelity.
+
+Validated local Qwen3.5 VLM result on RTX 4060 Laptop 8GB VRAM:
+
+```text
+Qwen3.5 VLM health check: passed
+text schema smoke with qwen3.5-9b-vlm: passed, 8.83 seconds
+vision schema smoke with qwen3.5-9b-vlm: passed, 6.62 seconds
+pixel vision benchmark: 3 PDFs, 8/9 visual facts, 88.9% vision_fact_recall
+pixel benchmark schema_valid_rate: 100%
+pixel benchmark finding_source_trace_rate: 100%
+```
+
+The pixel benchmark uses deterministic matching with optional gold aliases for equivalent phrasing, while still reporting missed facts instead of lowering the target.
+
+If Qwen3.5-9B + `mmproj` is unstable or too tight on 8GB VRAM, fall back to the officially listed smaller llama.cpp multimodal repos such as `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` by overriding `LITAGENT_VISION_HF_REPO`, port, alias, and Streamlit/evaluator vision settings.
 
 ## vLLM Fallback Notes
 
@@ -207,6 +269,6 @@ For this project, llama.cpp is the better primary inference server because it lo
 ## Current Limitations
 
 - The default demo uses mock abstracts unless live retrieval or PDF input is selected.
-- Full-paper support is layout/table/caption understanding, not pixel-level chart or figure reasoning.
+- Full-paper layout support covers layout/table/caption facts; pixel-level chart or figure reasoning requires the optional vision server and is currently evaluated on a small synthetic benchmark.
 - Live Semantic Scholar retrieval may require an API key; unauthenticated requests can return HTTP 429 rate-limit errors.
 - Assignment PDF files are intentionally ignored and should remain local unless a private course repository requires them.
