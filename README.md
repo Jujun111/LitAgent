@@ -59,7 +59,12 @@ On Windows, the parser sets Hugging Face cache flags to avoid symlink permission
 
 ## Run the Prototype
 
-Run the smoke test:
+There are two demo paths:
+
+- Offline UI demo: no model server, no Semantic Scholar API key.
+- Local LLM demo: requires a separate llama.cpp server on `http://127.0.0.1:8080/v1`.
+
+Run the smoke test first:
 
 ```bash
 python smoke_test.py
@@ -84,6 +89,26 @@ Then open:
 http://127.0.0.1:8501
 ```
 
+For the offline UI demo, select:
+
+```text
+Model provider: Mock
+Use mock papers: on
+Use PDF paper: off
+```
+
+For the local LLM demo, start llama.cpp first in a second terminal, then select:
+
+```text
+Model provider: llama.cpp local
+Base URL: http://127.0.0.1:8080/v1
+API key: llama-cpp
+Model: qwen3.5-9b-vlm
+JSON mode: json_schema
+```
+
+If `Generate dossier` reports `Failed to establish a new connection` for port `8080`, llama.cpp is not running yet.
+
 ## Live Retrieval and Local LLM Options
 
 Mock papers are enabled by default so the course prototype works without external services.
@@ -94,7 +119,7 @@ For local model inference, choose an OpenAI-compatible provider in the sidebar a
 
 ## llama.cpp AI Microservice
 
-The `feat/llm-service` branch includes a llama.cpp service wrapper for the AI component. It serves an OpenAI-compatible `/v1/chat/completions` endpoint, and the controller sends schema-constrained JSON parameters in this shape:
+The recommended local demo uses a unified Qwen3.5-9B VLM llama.cpp server. It serves an OpenAI-compatible `/v1/chat/completions` endpoint on `http://127.0.0.1:8080/v1`, and the controller sends schema-constrained JSON parameters in this shape:
 
 ```json
 {
@@ -105,41 +130,63 @@ The `feat/llm-service` branch includes a llama.cpp service wrapper for the AI co
 }
 ```
 
-Download a Windows CUDA llama.cpp release from ggml-org/llama.cpp and extract it into `tools/llama.cpp`. Place the GGUF model at:
+Download a Windows CUDA llama.cpp release from [ggml-org/llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it into `tools/llama.cpp`. The repo should then contain:
+
+```text
+tools/llama.cpp/llama-server.exe
+```
+
+Create `models/` and place the Qwen3.5 model plus projector there:
 
 ```text
 models/Qwen3.5-9B-Q4_K_M.gguf
+models/mmproj-F16.gguf
 ```
 
-Both `tools/` and `models/` are ignored by git.
-
-Start llama.cpp on Windows:
+Both `tools/` and `models/` are ignored by git. The model and projector can be downloaded manually from a Qwen3.5 VLM GGUF repo such as [jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF](https://huggingface.co/jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF). On PowerShell, this is the direct download shape:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\llm_service\serve_llamacpp.ps1 llm_service\config.llamacpp.example.env
+New-Item -ItemType Directory -Force models
+$ProgressPreference = "SilentlyContinue"
+Invoke-WebRequest `
+  -Uri "https://huggingface.co/jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf" `
+  -OutFile "models/Qwen3.5-9B-Q4_K_M.gguf"
+Invoke-WebRequest `
+  -Uri "https://huggingface.co/jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF/resolve/main/mmproj-F16.gguf" `
+  -OutFile "models/mmproj-F16.gguf"
+```
+
+Start the unified Qwen3.5 VLM server on Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\llm_service\serve_llamacpp_vision.ps1 llm_service\config.llamacpp-vision.example.env
 ```
 
 Or start a Linux/WSL build:
 
 ```bash
-bash llm_service/serve_llamacpp.sh llm_service/config.llamacpp.example.env
+bash llm_service/serve_llamacpp_vision.sh llm_service/config.llamacpp-vision.example.env
 ```
 
-Default llama.cpp settings:
+Default llama.cpp VLM settings:
 
 ```text
-LITAGENT_LLAMA_MODEL=models/Qwen3.5-9B-Q4_K_M.gguf
-LITAGENT_LLAMA_MODEL_ALIAS=qwen3.5-9b-q4km
-LITAGENT_LLAMA_CTX_SIZE=4096
-LITAGENT_LLAMA_GPU_LAYERS=999
+LITAGENT_VISION_MODEL=models/Qwen3.5-9B-Q4_K_M.gguf
+LITAGENT_VISION_MMPROJ=models/mmproj-F16.gguf
+LITAGENT_VISION_MODEL_ALIAS=qwen3.5-9b-vlm
+LITAGENT_VISION_CTX_SIZE=4096
+LITAGENT_VISION_GPU_LAYERS=999
 ```
 
 Check the running service:
 
 ```bash
-python llm_service/check_llamacpp.py
-python llm_service/smoke_llamacpp_schema.py
+python llm_service/check_llamacpp_vision.py
+python llm_service/smoke_llamacpp_schema.py --model qwen3.5-9b-vlm
+python llm_service/smoke_llamacpp_vision_schema.py
 ```
+
+Keep this terminal open while Streamlit is running. Close it, or press `Ctrl+C`, when the demo is done.
 
 ## Text-Only Fidelity Evaluation
 

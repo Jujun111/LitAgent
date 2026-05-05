@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import requests
 import streamlit as st
 
 from litagent_backend import benchmark_pipeline, run_pipeline
@@ -50,6 +51,24 @@ PROVIDER_PRESETS = {
         "structured_mode": "json_object",
     },
 }
+
+
+def format_demo_error(exc: Exception, provider_label: str, base_url: str) -> str:
+    if isinstance(exc, requests.ConnectionError) and "127.0.0.1" in base_url:
+        return (
+            f"Could not connect to the local model server at {base_url}. "
+            "Start llama.cpp in another terminal before using the llama.cpp local provider:\n\n"
+            "powershell -NoProfile -ExecutionPolicy Bypass -File "
+            ".\\llm_service\\serve_llamacpp_vision.ps1 "
+            "llm_service\\config.llamacpp-vision.example.env\n\n"
+            "For a no-model UI demo, choose Model provider = Mock and turn on Use mock papers."
+        )
+    if isinstance(exc, requests.ConnectionError):
+        return (
+            f"Could not connect to the selected provider '{provider_label}' at {base_url}. "
+            "Start that OpenAI-compatible server first, or switch to Mock for an offline demo."
+        )
+    return str(exc)
 
 
 st.set_page_config(page_title="LitAgent", layout="wide")
@@ -152,7 +171,10 @@ if run_clicked:
             )
             st.session_state["last_result"] = result
         except Exception as exc:
-            st.session_state["last_result"] = {"is_schema_valid": False, "error": str(exc)}
+            st.session_state["last_result"] = {
+                "is_schema_valid": False,
+                "error": format_demo_error(exc, provider_label, base_url),
+            }
 
 if bench_clicked:
     with st.status("Benchmarking pipeline...", expanded=False):
@@ -173,7 +195,7 @@ if bench_clicked:
             )
             st.session_state["last_benchmark"] = benchmark
         except Exception as exc:
-            st.session_state["last_benchmark"] = {"error": str(exc)}
+            st.session_state["last_benchmark"] = {"error": format_demo_error(exc, provider_label, base_url)}
 
 result = st.session_state.get("last_result")
 benchmark = st.session_state.get("last_benchmark")
