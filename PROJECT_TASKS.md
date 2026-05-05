@@ -2,7 +2,7 @@
 
 ## Current Working Target
 
-Course-ready prototype plus validated llama.cpp AI microservice on `feat/llm-service`.
+Course-ready prototype plus validated llama.cpp AI microservice and text-only fidelity evaluation.
 
 Default demo path:
 
@@ -29,6 +29,7 @@ http://127.0.0.1:8501
 | Task 2.2: Prompt Engineering | Scaffolded | `build_prompt()` caps context chunks and formats paper metadata/text |
 | Task 2.3: Constrained Decoding | Done for llama.cpp contract | `json_schema` mode sends `response_format` with a llama.cpp-compatible `ResearchDossier` schema |
 | Task 2.4: Benchmarking | Done with real local model | llama.cpp benchmark: 3/3 valid JSON, max 9.30s, under 60s |
+| Task 2.5: Extraction Fidelity | Done for text-only scope | `evaluate_fidelity.py` checks fixed gold abstracts; latest run matched 60/60 required facts |
 
 ## Acceptance Checks
 
@@ -36,7 +37,7 @@ Run:
 
 ```bash
 python smoke_test.py
-python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py
+python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py evaluate_fidelity.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py
 ```
 
 Expected smoke-test checks:
@@ -49,6 +50,14 @@ Expected smoke-test checks:
 - all mock runs finish under 60 seconds
 - llama.cpp schema smoke test passes
 - real llama.cpp benchmark has 100% valid JSON
+- text-only fidelity eval has `schema_valid_rate == 100%` and `required_fact_recall >= 95%`
+
+## Fidelity Notes
+
+- Run `python evaluate_fidelity.py --benchmark benchmarks/text_dossier/gold.jsonl --provider llama.cpp`.
+- The current frozen text benchmark has 20 examples and 60 required facts.
+- Latest local run passed with `schema_valid_rate=1.0`, `required_fact_recall=1.0`, and average latency 6.06s.
+- This score does not claim full-paper figure/table fidelity; multimodal evaluation remains a separate future task.
 
 ## Live Mode Notes
 

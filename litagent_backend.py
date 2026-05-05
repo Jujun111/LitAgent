@@ -263,8 +263,11 @@ def fetch_data_node(
     api_key: Optional[str] = None,
     use_mock_fetch: bool = True,
     fallback_to_mock_on_error: bool = False,
+    fixed_papers: Optional[List[Dict[str, Any]]] = None,
 ) -> LitAgentState:
     query = state["query"]
+    if fixed_papers is not None:
+        return {"raw_papers": fixed_papers, "fetch_mode": "fixed"}
     if use_mock_fetch:
         return {"raw_papers": make_mock_papers(query), "fetch_mode": "mock"}
 
@@ -320,6 +323,7 @@ Context:
 
 Create a concise research dossier from the context.
 Return JSON only. No markdown. No extra commentary.
+Preserve concrete source facts, methods, datasets, metrics, and limitations that are explicitly stated in the context.
 
 Required JSON fields:
 - query
@@ -444,6 +448,7 @@ def build_litagent_graph(
     provider: str = "mock",
     use_mock_fetch: bool = True,
     fallback_to_mock_on_error: bool = False,
+    fixed_papers: Optional[List[Dict[str, Any]]] = None,
     semantic_scholar_api_key: Optional[str] = None,
     base_url: str = "http://localhost:8000/v1",
     api_key: str = "token-abc123",
@@ -463,6 +468,7 @@ def build_litagent_graph(
             api_key=semantic_scholar_api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY"),
             use_mock_fetch=use_mock_fetch,
             fallback_to_mock_on_error=fallback_to_mock_on_error,
+            fixed_papers=fixed_papers,
         ),
     )
     graph.add_node("Chunk_Text", chunk_text_node)
@@ -512,6 +518,7 @@ def run_pipeline(
     provider: str = "mock",
     use_mock_fetch: bool = True,
     fallback_to_mock_on_error: bool = False,
+    fixed_papers: Optional[List[Dict[str, Any]]] = None,
     semantic_scholar_api_key: Optional[str] = None,
     base_url: str = "http://localhost:8000/v1",
     api_key: str = "token-abc123",
@@ -528,6 +535,7 @@ def run_pipeline(
             provider=provider,
             use_mock_fetch=use_mock_fetch,
             fallback_to_mock_on_error=fallback_to_mock_on_error,
+            fixed_papers=fixed_papers,
             semantic_scholar_api_key=semantic_scholar_api_key,
             base_url=base_url,
             api_key=api_key,
@@ -544,6 +552,7 @@ def run_pipeline(
                 api_key=semantic_scholar_api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY"),
                 use_mock_fetch=use_mock_fetch,
                 fallback_to_mock_on_error=fallback_to_mock_on_error,
+                fixed_papers=fixed_papers,
             )
         )
         state.update(chunk_text_node(state))

@@ -130,6 +130,25 @@ python llm_service/check_llamacpp.py
 python llm_service/smoke_llamacpp_schema.py
 ```
 
+## Text-Only Fidelity Evaluation
+
+LitAgent evaluates the 95% extraction fidelity target with a frozen text-only benchmark, not live Semantic Scholar retrieval. This keeps the score reproducible without an API key and defines fidelity as required-fact recall over labeled source abstracts.
+
+Run the evaluator with the local llama.cpp server:
+
+```bash
+python evaluate_fidelity.py --benchmark benchmarks/text_dossier/gold.jsonl --provider llama.cpp
+```
+
+The evaluator reports:
+
+- `schema_valid_rate`: percentage of outputs that validate as `ResearchDossier`
+- `required_fact_recall`: matched gold facts divided by total gold facts
+- `average_field_coverage`: coverage of required dossier fields
+- latency and validation attempts for every sample
+
+The current acceptance target is `schema_valid_rate == 100%` and `required_fact_recall >= 95%`. Evaluation reports are written to ignored `evidence/` files so detailed outputs can be kept locally without committing generated model text.
+
 Validated local result on RTX 4060 Laptop 8GB VRAM:
 
 ```text
@@ -138,6 +157,7 @@ schema smoke test: passed, 7.61 seconds
 LangGraph + mock fetch + real llama.cpp: schema-valid, 10.03 seconds
 LangGraph + live Semantic Scholar + real llama.cpp: schema-valid, 49.35 seconds
 3-run benchmark: 100% valid JSON, max 9.30 seconds
+text-only fidelity eval: 20 examples, 60/60 required facts, 100% recall
 ```
 
 Streamlit preset:
@@ -163,6 +183,6 @@ For this project, llama.cpp is the better primary inference server because it lo
 ## Current Limitations
 
 - The default demo synthesizes abstracts, not full downloaded PDFs.
-- The 95% extraction fidelity requirement can only be evaluated with a real model and a labeled benchmark set.
+- The fidelity evaluator is text-only; full-paper figure/table understanding requires a separate multimodal benchmark.
 - Live Semantic Scholar retrieval may require an API key; unauthenticated requests can return HTTP 429 rate-limit errors.
 - Assignment PDF files are intentionally ignored and should remain local unless a private course repository requires them.
