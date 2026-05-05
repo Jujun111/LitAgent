@@ -1,0 +1,6 @@
+# Optional full-paper PDF layout ingestion dependencies.
+# Docling may download layout/table models on first use.
+
+-r requirements.txt
+
+docling>=2.92.0,<3.0.0

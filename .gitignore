@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.hf-cache/
 
 .env
 .env.*
@@ -12,6 +13,7 @@ env/
 models/
 tools/
 evidence/
+benchmarks/**/parsed/
 llm_service/logs/
 llm_service/.env
 llm_service/.llamacpp.env

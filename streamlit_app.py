@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import streamlit as st
 
@@ -60,10 +61,13 @@ with st.sidebar:
     preset = PROVIDER_PRESETS[provider_label]
 
     use_mock_fetch = st.toggle("Use mock papers", value=True)
+    use_pdf_input = st.toggle("Use PDF paper", value=False)
     use_langgraph = st.toggle("Use LangGraph FSM", value=True)
     fallback_to_mock = st.toggle("Fallback to mock papers", value=False)
     semantic_scholar_api_key = st.text_input("Semantic Scholar API key", type="password")
     max_context_chunks = st.slider("Context chunks", min_value=1, max_value=12, value=8)
+    uploaded_pdf = st.file_uploader("PDF upload", type=["pdf"], disabled=not use_pdf_input)
+    local_pdf_path = st.text_input("Local PDF path", value="", disabled=not use_pdf_input)
 
     base_url = preset["base_url"]
     api_key = preset["api_key"]
@@ -92,11 +96,32 @@ bench_clicked = bench_col.button("Run 5x benchmark", use_container_width=True)
 if run_clicked:
     with st.status("Running LitAgent pipeline...", expanded=False):
         try:
+            fixed_papers = None
+            fixed_fetch_mode = "fixed"
+            effective_use_mock_fetch = use_mock_fetch
+            if use_pdf_input:
+                upload_dir = Path("evidence/streamlit_uploads")
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                if uploaded_pdf is not None:
+                    pdf_path = upload_dir / uploaded_pdf.name
+                    pdf_path.write_bytes(uploaded_pdf.getbuffer())
+                elif local_pdf_path:
+                    pdf_path = Path(local_pdf_path)
+                else:
+                    raise ValueError("PDF input is enabled but no PDF was provided.")
+                from pdf_ingest import parse_pdf_to_paper_record
+
+                fixed_papers = [parse_pdf_to_paper_record(pdf_path)]
+                fixed_fetch_mode = "pdf_fixed"
+                effective_use_mock_fetch = False
+
             result = run_pipeline(
                 query=query,
                 provider=preset["provider"],
-                use_mock_fetch=use_mock_fetch,
+                use_mock_fetch=effective_use_mock_fetch,
                 fallback_to_mock_on_error=fallback_to_mock,
+                fixed_papers=fixed_papers,
+                fixed_fetch_mode=fixed_fetch_mode,
                 semantic_scholar_api_key=semantic_scholar_api_key or None,
                 base_url=base_url,
                 api_key=api_key,
@@ -145,7 +170,7 @@ if result:
     if result.get("error"):
         st.error(result["error"])
 
-    tabs = st.tabs(["Dossier", "Raw JSON", "Prompt", "Papers"])
+    tabs = st.tabs(["Dossier", "Raw JSON", "Prompt", "Papers", "Chunks", "Sources"])
     with tabs[0]:
         dossier = result.get("dossier")
         if dossier:
@@ -181,6 +206,32 @@ if result:
 
     with tabs[3]:
         st.json(result.get("raw_papers", []))
+
+    with tabs[4]:
+        chunks = result.get("chunks", [])
+        if chunks:
+            st.dataframe(
+                [
+                    {
+                        "type": chunk.get("chunk_type"),
+                        "page": chunk.get("page_number"),
+                        "source": chunk.get("source_ref"),
+                        "paper_id": chunk.get("paper_id"),
+                        "text": chunk.get("text", "")[:500],
+                    }
+                    for chunk in chunks
+                ],
+                use_container_width=True,
+            )
+        else:
+            st.info("No chunks available.")
+
+    with tabs[5]:
+        finding_sources = result.get("finding_sources", [])
+        if finding_sources:
+            st.dataframe(finding_sources, use_container_width=True)
+        else:
+            st.info("No finding sources available.")
 
 if benchmark:
     st.subheader("Benchmark")

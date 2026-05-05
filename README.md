@@ -12,6 +12,7 @@ The project is demo-ready with mock data by default and has been validated end-t
 - `api_contracts.py` preserves the original single-paper AI contract used during earlier parallel development.
 - `smoke_test.py` verifies the mock LangGraph path and benchmark acceptance checks.
 - `llm_service/` contains the llama.cpp AI microservice launch scripts, config example, health check, schema-constrained smoke test, and experimental vLLM fallback assets.
+- `pdf_ingest.py` optionally parses full-paper PDFs with Docling into text, table, caption, page, and source-reference chunks.
 
 ## Requirements Mapping
 
@@ -45,6 +46,14 @@ On macOS/Linux, activate with:
 ```bash
 source .venv/bin/activate
 ```
+
+Full-paper PDF layout parsing is optional because Docling installs a larger document AI stack:
+
+```bash
+python -m pip install -r requirements-pdf.txt
+```
+
+On Windows, the parser sets Hugging Face cache flags to avoid symlink permission failures during Docling model downloads.
 
 ## Run the Prototype
 
@@ -149,6 +158,19 @@ The evaluator reports:
 
 The current acceptance target is `schema_valid_rate == 100%` and `required_fact_recall >= 95%`. Evaluation reports are written to ignored `evidence/` files so detailed outputs can be kept locally without committing generated model text.
 
+## Full-Paper Layout Evaluation
+
+The Docling-first full-paper path parses PDFs into text chunks, table markdown, figure/table captions, page numbers, and `source_ref` values before calling the existing LangGraph controller. It does not perform pixel-level chart or figure reasoning; that remains a future multimodal model stage.
+
+Run the parser smoke test and full-paper layout benchmark:
+
+```bash
+python smoke_pdf_ingest.py
+python evaluate_fidelity.py --benchmark benchmarks/full_paper_layout/gold.jsonl --provider llama.cpp --target-recall 0.90
+```
+
+The full-paper benchmark reports category recall for `text`, `table`, and `caption` facts plus `finding_source_trace_rate`, a deterministic sidecar that maps every generated finding back to the closest chunk source.
+
 Validated local result on RTX 4060 Laptop 8GB VRAM:
 
 ```text
@@ -157,7 +179,9 @@ schema smoke test: passed, 7.61 seconds
 LangGraph + mock fetch + real llama.cpp: schema-valid, 10.03 seconds
 LangGraph + live Semantic Scholar + real llama.cpp: schema-valid, 49.35 seconds
 3-run benchmark: 100% valid JSON, max 9.30 seconds
-text-only fidelity eval: 20 examples, 60/60 required facts, 100% recall
+text-only fidelity eval: 20 examples, 59/60 required facts, 98.3% recall
+full-paper layout eval: 3 PDFs, 15/15 required facts, 100% recall
+full-paper finding source trace rate: 100%
 ```
 
 Streamlit preset:
@@ -182,7 +206,7 @@ For this project, llama.cpp is the better primary inference server because it lo
 
 ## Current Limitations
 
-- The default demo synthesizes abstracts, not full downloaded PDFs.
-- The fidelity evaluator is text-only; full-paper figure/table understanding requires a separate multimodal benchmark.
+- The default demo uses mock abstracts unless live retrieval or PDF input is selected.
+- Full-paper support is layout/table/caption understanding, not pixel-level chart or figure reasoning.
 - Live Semantic Scholar retrieval may require an API key; unauthenticated requests can return HTTP 429 rate-limit errors.
 - Assignment PDF files are intentionally ignored and should remain local unless a private course repository requires them.

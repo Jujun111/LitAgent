@@ -46,10 +46,12 @@ def load_benchmark(path: Path, limit: int = 0) -> list[dict[str, Any]]:
             if not line.strip():
                 continue
             item = json.loads(line)
-            required = {"id", "query", "source_papers", "gold_required_facts"}
+            required = {"id", "query", "gold_required_facts"}
             missing = sorted(required - set(item))
             if missing:
                 raise ValueError(f"{path}:{line_number} missing required fields: {', '.join(missing)}")
+            if "source_papers" not in item and "source_pdf" not in item and "source_pdfs" not in item:
+                raise ValueError(f"{path}:{line_number} must define source_papers, source_pdf, or source_pdfs")
             examples.append(item)
             if limit and len(examples) >= limit:
                 break
@@ -84,14 +86,52 @@ def field_coverage(dossier: dict[str, Any] | None) -> float:
     return sum(1 for item in checks if item) / len(checks) if checks else 0.0
 
 
+def resolve_benchmark_path(value: str, benchmark_path: Path) -> Path:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate
+    from_benchmark_dir = benchmark_path.parent / candidate
+    if from_benchmark_dir.exists():
+        return from_benchmark_dir
+    return candidate
+
+
+def load_example_papers(example: dict[str, Any], benchmark_path: Path) -> tuple[list[dict[str, Any]], str]:
+    if "source_papers" in example:
+        return example["source_papers"], "fixed"
+
+    from pdf_ingest import parse_pdf_to_paper_record
+
+    pdf_values = example.get("source_pdfs") or [example["source_pdf"]]
+    papers = [
+        parse_pdf_to_paper_record(resolve_benchmark_path(pdf_value, benchmark_path))
+        for pdf_value in pdf_values
+    ]
+    return papers, "pdf_fixed"
+
+
+def fact_text(fact: str | dict[str, Any]) -> str:
+    if isinstance(fact, dict):
+        return str(fact.get("text", ""))
+    return str(fact)
+
+
+def fact_category(fact: str | dict[str, Any]) -> str:
+    if isinstance(fact, dict):
+        return str(fact.get("category", "text"))
+    return "text"
+
+
 def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     provider = "mock" if args.provider == "mock" else "openai_compatible"
     structured_mode = "json_schema" if provider == "openai_compatible" else "none"
+    fixed_papers, fixed_fetch_mode = load_example_papers(example, args.benchmark)
     result = run_pipeline(
         example["query"],
         provider=provider,
         use_mock_fetch=False,
-        fixed_papers=example["source_papers"],
+        fixed_papers=fixed_papers,
+        fixed_fetch_mode=fixed_fetch_mode,
         base_url=args.base_url,
         api_key=args.api_key,
         model=args.model,
@@ -106,11 +146,17 @@ def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[
     generated_text = normalize_text(json.dumps(dossier or {}, ensure_ascii=False))
     matched_facts: list[str] = []
     missed_facts: list[str] = []
+    category_counts: dict[str, dict[str, int]] = {}
     for fact in example["gold_required_facts"]:
-        if normalize_text(fact) in generated_text:
-            matched_facts.append(fact)
+        text = fact_text(fact)
+        category = fact_category(fact)
+        category_counts.setdefault(category, {"matched": 0, "total": 0})
+        category_counts[category]["total"] += 1
+        if normalize_text(text) in generated_text:
+            matched_facts.append(text)
+            category_counts[category]["matched"] += 1
         else:
-            missed_facts.append(fact)
+            missed_facts.append(text)
 
     total_facts = len(example["gold_required_facts"])
     return {
@@ -124,8 +170,10 @@ def evaluate_example(example: dict[str, Any], args: argparse.Namespace) -> dict[
         "llm_latency_seconds": result.get("llm_latency_seconds"),
         "validation_attempts": result.get("validation_attempts"),
         "field_coverage": field_coverage(dossier),
+        "finding_sources": result.get("finding_sources", []),
         "matched_facts": matched_facts,
         "missed_facts": missed_facts,
+        "category_counts": category_counts,
         "required_fact_recall": len(matched_facts) / total_facts if total_facts else 0.0,
         "dossier": dossier,
         "error": result.get("error", ""),
@@ -136,8 +184,21 @@ def summarize(records: list[dict[str, Any]], target_recall: float) -> dict[str, 
     total = len(records)
     total_facts = sum(len(item["matched_facts"]) + len(item["missed_facts"]) for item in records)
     matched_facts = sum(len(item["matched_facts"]) for item in records)
+    category_counts: dict[str, dict[str, int]] = {}
+    for item in records:
+        for category, counts in item.get("category_counts", {}).items():
+            category_counts.setdefault(category, {"matched": 0, "total": 0})
+            category_counts[category]["matched"] += counts.get("matched", 0)
+            category_counts[category]["total"] += counts.get("total", 0)
     latencies = [item["latency_seconds"] for item in records if item.get("latency_seconds") is not None]
     schema_valid_count = sum(1 for item in records if item["schema_valid"])
+    finding_source_total = sum(len(item.get("finding_sources", [])) for item in records)
+    finding_source_traced = sum(
+        1
+        for item in records
+        for source in item.get("finding_sources", [])
+        if source.get("source_ref")
+    )
     avg_field_coverage = sum(item["field_coverage"] for item in records) / total if total else 0.0
     required_fact_recall = matched_facts / total_facts if total_facts else 0.0
 
@@ -147,6 +208,13 @@ def summarize(records: list[dict[str, Any]], target_recall: float) -> dict[str, 
         "matched_required_facts": matched_facts,
         "schema_valid_rate": schema_valid_count / total if total else 0.0,
         "required_fact_recall": required_fact_recall,
+        "category_recall": {
+            category: counts["matched"] / counts["total"] if counts["total"] else 0.0
+            for category, counts in sorted(category_counts.items())
+        },
+        "finding_source_trace_rate": (
+            finding_source_traced / finding_source_total if finding_source_total else 0.0
+        ),
         "average_field_coverage": avg_field_coverage,
         "average_latency_seconds": sum(latencies) / len(latencies) if latencies else None,
         "max_latency_seconds": max(latencies) if latencies else None,

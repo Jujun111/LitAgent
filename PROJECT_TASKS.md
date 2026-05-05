@@ -2,7 +2,7 @@
 
 ## Current Working Target
 
-Course-ready prototype plus validated llama.cpp AI microservice and text-only fidelity evaluation.
+Course-ready prototype plus validated llama.cpp AI microservice, fidelity evaluation, and Docling-first full-paper layout parsing.
 
 Default demo path:
 
@@ -29,7 +29,8 @@ http://127.0.0.1:8501
 | Task 2.2: Prompt Engineering | Scaffolded | `build_prompt()` caps context chunks and formats paper metadata/text |
 | Task 2.3: Constrained Decoding | Done for llama.cpp contract | `json_schema` mode sends `response_format` with a llama.cpp-compatible `ResearchDossier` schema |
 | Task 2.4: Benchmarking | Done with real local model | llama.cpp benchmark: 3/3 valid JSON, max 9.30s, under 60s |
-| Task 2.5: Extraction Fidelity | Done for text-only scope | `evaluate_fidelity.py` checks fixed gold abstracts; latest run matched 60/60 required facts |
+| Task 2.5: Extraction Fidelity | Done for text-only scope | `evaluate_fidelity.py` checks fixed gold abstracts; latest run matched 59/60 required facts |
+| Task 2.6: Full-Paper Layout | Done for Docling-first scope | `pdf_ingest.py` parses PDFs into text, table, caption, page, and source-ref chunks |
 
 ## Acceptance Checks
 
@@ -37,7 +38,7 @@ Run:
 
 ```bash
 python smoke_test.py
-python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py evaluate_fidelity.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py
+python -m py_compile api_contracts.py litagent_backend.py litagent_fsm.py streamlit_app.py smoke_test.py evaluate_fidelity.py pdf_ingest.py smoke_pdf_ingest.py llm_service/check_llamacpp.py llm_service/smoke_llamacpp_schema.py
 ```
 
 Expected smoke-test checks:
@@ -51,13 +52,17 @@ Expected smoke-test checks:
 - llama.cpp schema smoke test passes
 - real llama.cpp benchmark has 100% valid JSON
 - text-only fidelity eval has `schema_valid_rate == 100%` and `required_fact_recall >= 95%`
+- full-paper layout eval has `schema_valid_rate == 100%`, `required_fact_recall >= 90%`, and `finding_source_trace_rate == 100%`
 
 ## Fidelity Notes
 
 - Run `python evaluate_fidelity.py --benchmark benchmarks/text_dossier/gold.jsonl --provider llama.cpp`.
 - The current frozen text benchmark has 20 examples and 60 required facts.
-- Latest local run passed with `schema_valid_rate=1.0`, `required_fact_recall=1.0`, and average latency 6.06s.
-- This score does not claim full-paper figure/table fidelity; multimodal evaluation remains a separate future task.
+- Latest local text run passed with `schema_valid_rate=1.0`, `required_fact_recall=0.9833`, and average latency 6.41s.
+- Run `python smoke_pdf_ingest.py` to verify Docling PDF parsing on 3 fixture PDFs.
+- Run `python evaluate_fidelity.py --benchmark benchmarks/full_paper_layout/gold.jsonl --provider llama.cpp --target-recall 0.90`.
+- Latest full-paper layout run passed with `schema_valid_rate=1.0`, `required_fact_recall=1.0`, category recall of 1.0 for text/table/caption, and `finding_source_trace_rate=1.0`.
+- This score covers layout/table/caption understanding; pixel-level figure reasoning remains a separate future task.
 
 ## Live Mode Notes
 

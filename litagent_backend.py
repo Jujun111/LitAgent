@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -58,6 +59,66 @@ class ResearchDossier(BaseModel):
     disclaimer: str
 
 
+TRACE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "before",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+}
+
+
+def trace_tokens(value: str) -> set[str]:
+    tokens = set(re.findall(r"[a-z0-9]+", value.lower()))
+    return {token for token in tokens if len(token) > 2 and token not in TRACE_STOPWORDS}
+
+
+def trace_finding_sources(dossier: ResearchDossier, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    traced: List[Dict[str, Any]] = []
+    chunk_tokens = [(chunk, trace_tokens(chunk.get("text", ""))) for chunk in chunks]
+
+    for paper in dossier.key_papers:
+        for finding in paper.key_findings:
+            finding_tokens = trace_tokens(finding)
+            best_chunk: Optional[Dict[str, Any]] = None
+            best_score = 0.0
+            for chunk, tokens in chunk_tokens:
+                if chunk.get("paper_id") and chunk.get("paper_id") != paper.paper_id:
+                    continue
+                if not finding_tokens or not tokens:
+                    continue
+                overlap = len(finding_tokens & tokens)
+                score = overlap / len(finding_tokens)
+                if score > best_score:
+                    best_score = score
+                    best_chunk = chunk
+            traced.append(
+                {
+                    "paper_id": paper.paper_id,
+                    "title": paper.title,
+                    "finding": finding,
+                    "source_ref": best_chunk.get("source_ref", "") if best_chunk else "",
+                    "page_number": best_chunk.get("page_number") if best_chunk else None,
+                    "chunk_type": best_chunk.get("chunk_type", "") if best_chunk else "",
+                    "match_score": round(best_score, 3),
+                }
+            )
+    return traced
+
+
 def research_dossier_json_schema() -> Dict[str, Any]:
     return {
         "type": "object",
@@ -104,6 +165,7 @@ class LitAgentState(TypedDict, total=False):
     prompt: str
     llm_raw_output: str
     dossier: Dict[str, Any]
+    finding_sources: List[Dict[str, Any]]
     is_schema_valid: bool
     error: str
     validation_error: str
@@ -264,10 +326,11 @@ def fetch_data_node(
     use_mock_fetch: bool = True,
     fallback_to_mock_on_error: bool = False,
     fixed_papers: Optional[List[Dict[str, Any]]] = None,
+    fixed_fetch_mode: str = "fixed",
 ) -> LitAgentState:
     query = state["query"]
     if fixed_papers is not None:
-        return {"raw_papers": fixed_papers, "fetch_mode": "fixed"}
+        return {"raw_papers": fixed_papers, "fetch_mode": fixed_fetch_mode}
     if use_mock_fetch:
         return {"raw_papers": make_mock_papers(query), "fetch_mode": "mock"}
 
@@ -296,8 +359,32 @@ def chunk_text_node(state: LitAgentState, chunk_size: int = 1200) -> LitAgentSta
                     "year": paper.get("year"),
                     "venue": paper.get("venue"),
                     "text": abstract[i : i + chunk_size],
+                    "chunk_type": "abstract",
+                    "page_number": None,
+                    "source_ref": f"{paper.get('paper_id', '')}:abstract-{(i // chunk_size) + 1}",
                 }
             )
+        for collection_name, default_type in (
+            ("full_text_chunks", "text"),
+            ("tables_markdown", "table"),
+            ("captions", "caption"),
+        ):
+            for item in paper.get(collection_name, []) or []:
+                text = item.get("text") or item.get("markdown") or item.get("caption") or ""
+                if not text:
+                    continue
+                chunks.append(
+                    {
+                        "paper_id": paper.get("paper_id", item.get("paper_id", "")),
+                        "title": paper.get("title", "Untitled"),
+                        "year": paper.get("year"),
+                        "venue": paper.get("venue"),
+                        "text": text,
+                        "chunk_type": item.get("chunk_type", default_type),
+                        "page_number": item.get("page_number"),
+                        "source_ref": item.get("source_ref", ""),
+                    }
+                )
     return {"chunks": chunks}
 
 
@@ -309,6 +396,9 @@ def build_prompt(query: str, chunks: List[Dict[str, Any]], max_chunks: int = 8) 
             f"title: {chunk.get('title', '')}\n"
             f"year: {chunk.get('year', '')}\n"
             f"venue: {chunk.get('venue', '')}\n"
+            f"chunk_type: {chunk.get('chunk_type', 'text')}\n"
+            f"page_number: {chunk.get('page_number') or ''}\n"
+            f"source_ref: {chunk.get('source_ref', '')}\n"
             f"text: {chunk.get('text', '')}"
         )
         for i, chunk in enumerate(chunks[:max_chunks])
@@ -324,6 +414,7 @@ Context:
 Create a concise research dossier from the context.
 Return JSON only. No markdown. No extra commentary.
 Preserve concrete source facts, methods, datasets, metrics, and limitations that are explicitly stated in the context.
+When chunks include source_ref or page_number, include the most relevant source_ref in each key finding.
 
 Required JSON fields:
 - query
@@ -431,6 +522,7 @@ def validate_json_node(state: LitAgentState) -> LitAgentState:
         model = ResearchDossier.model_validate_json(raw)
         return {
             "dossier": model.model_dump(),
+            "finding_sources": trace_finding_sources(model, state.get("chunks", [])),
             "is_schema_valid": True,
             "validation_attempts": attempts,
             "validation_error": "",
@@ -449,6 +541,7 @@ def build_litagent_graph(
     use_mock_fetch: bool = True,
     fallback_to_mock_on_error: bool = False,
     fixed_papers: Optional[List[Dict[str, Any]]] = None,
+    fixed_fetch_mode: str = "fixed",
     semantic_scholar_api_key: Optional[str] = None,
     base_url: str = "http://localhost:8000/v1",
     api_key: str = "token-abc123",
@@ -469,6 +562,7 @@ def build_litagent_graph(
             use_mock_fetch=use_mock_fetch,
             fallback_to_mock_on_error=fallback_to_mock_on_error,
             fixed_papers=fixed_papers,
+            fixed_fetch_mode=fixed_fetch_mode,
         ),
     )
     graph.add_node("Chunk_Text", chunk_text_node)
@@ -519,6 +613,7 @@ def run_pipeline(
     use_mock_fetch: bool = True,
     fallback_to_mock_on_error: bool = False,
     fixed_papers: Optional[List[Dict[str, Any]]] = None,
+    fixed_fetch_mode: str = "fixed",
     semantic_scholar_api_key: Optional[str] = None,
     base_url: str = "http://localhost:8000/v1",
     api_key: str = "token-abc123",
@@ -536,6 +631,7 @@ def run_pipeline(
             use_mock_fetch=use_mock_fetch,
             fallback_to_mock_on_error=fallback_to_mock_on_error,
             fixed_papers=fixed_papers,
+            fixed_fetch_mode=fixed_fetch_mode,
             semantic_scholar_api_key=semantic_scholar_api_key,
             base_url=base_url,
             api_key=api_key,
@@ -553,6 +649,7 @@ def run_pipeline(
                 use_mock_fetch=use_mock_fetch,
                 fallback_to_mock_on_error=fallback_to_mock_on_error,
                 fixed_papers=fixed_papers,
+                fixed_fetch_mode=fixed_fetch_mode,
             )
         )
         state.update(chunk_text_node(state))
