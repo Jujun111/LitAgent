@@ -86,6 +86,7 @@ with st.sidebar:
     fallback_to_mock = st.toggle("Fallback to mock papers", value=False)
     semantic_scholar_api_key = st.text_input("Semantic Scholar API key", type="password")
     max_context_chunks = st.slider("Context chunks", min_value=1, max_value=12, value=8)
+    max_output_tokens = st.slider("Max output tokens", min_value=1024, max_value=8192, value=4096, step=512)
     uploaded_pdf = st.file_uploader("PDF upload", type=["pdf"], disabled=not use_pdf_input)
     local_pdf_path = st.text_input("Local PDF path", value="", disabled=not use_pdf_input)
 
@@ -163,6 +164,7 @@ if run_clicked:
                 model=model,
                 structured_mode=structured_mode,
                 max_context_chunks=max_context_chunks,
+                max_output_tokens=max_output_tokens,
                 use_langgraph=use_langgraph,
                 use_vision=use_vision,
                 vision_base_url=vision_base_url,
@@ -191,6 +193,7 @@ if bench_clicked:
                 model=model,
                 structured_mode=structured_mode,
                 max_context_chunks=max_context_chunks,
+                max_output_tokens=max_output_tokens,
                 use_langgraph=use_langgraph,
             )
             st.session_state["last_benchmark"] = benchmark

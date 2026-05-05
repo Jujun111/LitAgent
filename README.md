@@ -109,6 +109,8 @@ JSON mode: json_schema
 
 If `Generate dossier` reports `Failed to establish a new connection` for port `8080`, llama.cpp is not running yet.
 
+If `Generate dossier` reports `EOF while parsing a string`, the local model output was likely truncated before JSON finished. The app now sends a larger output budget by default and asks the model for a shorter dossier. Keep `Max output tokens` at `4096` or higher for live retrieval, and reduce `Context chunks` if you still see truncation on long topics.
+
 ## Live Retrieval and Local LLM Options
 
 Mock papers are enabled by default so the course prototype works without external services.
@@ -187,6 +189,16 @@ python llm_service/smoke_llamacpp_vision_schema.py
 ```
 
 Keep this terminal open while Streamlit is running. Close it, or press `Ctrl+C`, when the demo is done.
+
+For classroom demos with live Semantic Scholar retrieval, use these Streamlit defaults:
+
+```text
+Model provider: llama.cpp local
+Use mock papers: off
+Use PDF paper: off
+Context chunks: 8
+Max output tokens: 4096
+```
 
 ## Text-Only Fidelity Evaluation
 

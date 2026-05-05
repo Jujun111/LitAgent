@@ -54,7 +54,7 @@ class ResearchDossier(BaseModel):
     query: str
     topic: str
     summary: str
-    key_papers: List[KeyPaperItem]
+    key_papers: List[KeyPaperItem] = Field(default_factory=list, max_length=5)
     limitations: List[str] = Field(default_factory=list)
     disclaimer: str
 
@@ -131,6 +131,7 @@ def research_dossier_json_schema() -> Dict[str, Any]:
             "key_papers": {
                 "type": "array",
                 "minItems": 1,
+                "maxItems": 5,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -144,6 +145,7 @@ def research_dossier_json_schema() -> Dict[str, Any]:
                         "key_findings": {
                             "type": "array",
                             "minItems": 1,
+                            "maxItems": 3,
                             "items": {"type": "string"},
                         },
                     },
@@ -467,6 +469,8 @@ Create a concise research dossier from the context.
 Return JSON only. No markdown. No extra commentary.
 Preserve concrete source facts, methods, datasets, metrics, visual observations, and limitations that are explicitly stated in the context.
 When chunks include source_ref or page_number, include the most relevant source_ref in each key finding.
+Select at most 5 key papers. Use at most 3 key_findings per paper. Keep each finding short enough to avoid truncation.
+Prefer the most relevant and information-rich papers over covering every chunk.
 
 Required JSON fields:
 - query
@@ -540,6 +544,7 @@ def call_openai_compatible_node(
     model: str,
     structured_mode: str = "vllm",
     timeout: int = 60,
+    max_output_tokens: int = 4096,
 ) -> LitAgentState:
     prompt = state.get("prompt") or build_prompt(state["query"], state.get("chunks", []))
     payload: Dict[str, Any] = {
@@ -552,6 +557,7 @@ def call_openai_compatible_node(
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,
+        "max_tokens": max_output_tokens,
     }
 
     if structured_mode == "vllm":
@@ -614,6 +620,7 @@ def build_litagent_graph(
     model: str = "qwen3.5-9b-q4km",
     structured_mode: str = "vllm",
     max_context_chunks: int = 8,
+    max_output_tokens: int = 4096,
     max_validation_attempts: int = 3,
     use_vision: bool = False,
     vision_provider: str = "openai_compatible",
@@ -662,6 +669,7 @@ def build_litagent_graph(
             model=model,
             structured_mode=structured_mode,
             timeout=60,
+            max_output_tokens=max_output_tokens,
         )
 
     graph.add_node("Call_LLM", call_llm)
@@ -705,6 +713,7 @@ def run_pipeline(
     model: str = "qwen3.5-9b-q4km",
     structured_mode: str = "vllm",
     max_context_chunks: int = 8,
+    max_output_tokens: int = 4096,
     use_langgraph: bool = True,
     use_vision: bool = False,
     vision_provider: str = "openai_compatible",
@@ -729,6 +738,7 @@ def run_pipeline(
             model=model,
             structured_mode=structured_mode,
             max_context_chunks=max_context_chunks,
+            max_output_tokens=max_output_tokens,
             use_vision=use_vision,
             vision_provider=vision_provider,
             vision_base_url=vision_base_url or base_url,
@@ -773,6 +783,7 @@ def run_pipeline(
                     model=model,
                     structured_mode=structured_mode,
                     timeout=60,
+                    max_output_tokens=max_output_tokens,
                 )
             )
         state.update(validate_json_node(state))
