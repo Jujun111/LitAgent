@@ -332,4 +332,3 @@ For this project, llama.cpp is the better primary inference server because it lo
 - The default demo uses mock abstracts unless live retrieval or PDF input is selected.
 - Full-paper layout support covers layout/table/caption facts; pixel-level chart or figure reasoning requires the optional vision server and is currently evaluated on a small synthetic benchmark.
 - Live Semantic Scholar retrieval may require an API key; unauthenticated requests can return HTTP 429 rate-limit errors.
-- Assignment PDF files are intentionally ignored and should remain local unless a private course repository requires them.
