@@ -30,7 +30,7 @@ The project is demo-ready with mock data by default and has been validated end-t
 | NfReq03: 60-second LLM latency | local model HTTP timeout, latency metrics, and llama.cpp benchmark evidence |
 | NfReq04: Extraction fidelity target | source-grounded prompts plus schema-constrained JSON; full fidelity evaluation requires a labeled benchmark set |
 | NfReq05: AI disclaimer | `AI_DISCLAIMER` rendered in every validated dossier |
-| Pixel-level figure/table understanding | optional llama.cpp vision service extracts visual facts from PDF crops before text synthesis |
+
 
 ## Setup
 
@@ -110,6 +110,8 @@ JSON mode: json_schema
 If `Generate dossier` reports `Failed to establish a new connection` for port `8080`, llama.cpp is not running yet.
 
 If `Generate dossier` reports `EOF while parsing a string`, the local model output was likely truncated before JSON finished. The app now sends a larger output budget by default and asks the model for a shorter dossier. Keep `Max output tokens` at `4096` or higher for live retrieval, and reduce `Context chunks` if you still see truncation on long topics.
+
+Pixel-level figure/table understanding: optional llama.cpp vision service extracts visual facts from PDF crops before text synthesis
 
 ## Live Retrieval and Local LLM Options
 
